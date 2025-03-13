@@ -216,6 +216,16 @@ def Gen4Timestring(numb):
     return f"{h:02d}:{m:02d}"
 
 
+from contextlib import asynccontextmanager
+
+@asynccontextmanager
+async def manage_connection(hub):
+    await hub._check_connection()
+    try:
+        yield
+    finally:
+        await hub.async_close()
+
 class SolaXModbusHub:
     """Thread safe wrapper class for pymodbus."""
 
@@ -548,38 +558,41 @@ class SolaXModbusHub:
         """Read holding registers."""
         kwargs = {"slave": unit} if unit else {}
         async with self._lock:
-            await self._check_connection()
-            try:
-                resp = await self._client.read_holding_registers(address=address, count=count, **kwargs)
-            except ModbusException as exception_error:
-                error = f"Error: device: {unit} address: {address} -> {exception_error!s}"
-                _LOGGER.error(error)
-                return None
+            async with manage_connection(self):
+                try:
+                    resp = await self._client.read_holding_registers(address=address, count=count, **kwargs)
+                except ModbusException as exception_error:
+                    error = f"Error: device: {unit} address: {address} -> {exception_error!s}"
+                    _LOGGER.error(error)
+                    return None
         return resp
 
     async def async_read_input_registers(self, unit, address, count):
         """Read input registers."""
         kwargs = {"slave": unit} if unit else {}
         async with self._lock:
-            await self._check_connection()
-            try:
-                resp = await self._client.read_input_registers(address=address, count=count, **kwargs)
-            except ModbusException as exception_error:
-                error = f"Error: device: {unit} address: {address} -> {exception_error!s}"
-                _LOGGER.error(error)
-                return None
+            async with manage_connection(self):
+                try:
+                    resp = await self._client.read_input_registers(address=address, count=count, **kwargs)
+                except ModbusException as exception_error:
+                    error = f"Error: device: {unit} address: {address} -> {exception_error!s}"
+                    _LOGGER.error(error)
+                    return None
         return resp
 
     async def async_lowlevel_write_register(self, unit, address, payload):
         kwargs = {"slave": unit} if unit else {}
-        # builder = BinaryPayloadBuilder(byteorder=Endian.BIG, wordorder=Endian.BIG)
         builder = BinaryPayloadBuilder(byteorder=self.plugin.order16, wordorder=self.plugin.order32)
         builder.reset()
         builder.add_16bit_int(payload)
         payload = builder.to_registers()
         async with self._lock:
-            await self._check_connection()
-            resp = await self._client.write_register(address, payload[0], **kwargs)
+            async with manage_connection(self):
+                try:
+                    resp = await self._client.write_register(address, payload[0], **kwargs)
+                except ModbusException as exception_error:
+                    _LOGGER.error(f"Error writing register: {exception_error!s}")
+                    return None
         return resp
 
     async def async_write_register(self, unit, address, payload):
@@ -612,12 +625,12 @@ class SolaXModbusHub:
         builder.add_16bit_int(payload)
         payload = builder.to_registers()
         async with self._lock:
-            await self._check_connection()
-            try:
-                resp = await self._client.write_registers(address=address, values=payload, **kwargs)
-            except (ConnectionException, ModbusIOException) as e:
-                original_message = str(e)
-                raise HomeAssistantError(f"Error writing single Modbus registers: {original_message}") from e
+            async with manage_connection(self):
+                try:
+                    resp = await self._client.write_registers(address=address, values=payload, **kwargs)
+                except ModbusException as exception_error:
+                    _LOGGER.error(f"Error writing registers: {exception_error!s}")
+                    return None
         return resp
 
     async def async_write_registers_multi(self, unit, address, payload):  # Needs adapting for regiater que
@@ -670,12 +683,12 @@ class SolaXModbusHub:
             # for easier debugging, make next line a _LOGGER.info line
             _LOGGER.debug(f"Ready to write multiple registers at 0x{address:02x}: {payload}")
             async with self._lock:
-                await self._check_connection()
-                try:
-                    resp = await self._client.write_registers(address=address, values=payload, **kwargs)
-                except (ConnectionException, ModbusIOException) as e:
-                    original_message = str(e)
-                    raise HomeAssistantError(f"Error writing multiple Modbus registers: {original_message}") from e
+                async with manage_connection(self):
+                    try:
+                        resp = await self._client.write_registers(address=address, values=payload, **kwargs)
+                    except ModbusException as exception_error:
+                        _LOGGER.error(f"Error writing multiple registers: {exception_error!s}")
+                        return None
             return resp
         else:
             _LOGGER.error(f"write_registers_multi expects a list of tuples 0x{address:02x} payload: {payload}")
@@ -683,17 +696,18 @@ class SolaXModbusHub:
 
     async def async_read_modbus_data(self, group):
         res = True
-        try:
-            res = await self.async_read_modbus_registers_all(group)
-        except ConnectionException as ex:
-            _LOGGER.error("Reading data failed! Inverter is offline.")
-            res = False
-        except ModbusIOException as ex:
-            _LOGGER.error(f"ModbusIOError: {ex}")
-            res = False
-        except Exception as ex:
-            _LOGGER.exception("Something went wrong reading from modbus")
-            res = False
+        async with manage_connection(self):
+            try:
+                res = await self.async_read_modbus_registers_all(group)
+            except ConnectionException as ex:
+                _LOGGER.error("Reading data failed! Inverter is offline.")
+                res = False
+            except ModbusIOException as ex:
+                _LOGGER.error(f"ModbusIOError: {ex}")
+                res = False
+            except Exception as ex:
+                _LOGGER.exception("Something went wrong reading from modbus")
+                res = False
         return res
 
     def treat_address(self, data, decoder, descr, initval=0):
@@ -762,83 +776,79 @@ class SolaXModbusHub:
 
     async def async_read_modbus_block(self, data, block, typ):
         errmsg = None
-        if self.cyclecount < 5:
-            _LOGGER.debug(
-                f"{self.name} modbus {typ} block start: 0x{block.start:x} end: 0x{block.end:x}  len: {block.end - block.start} \nregs: {block.regs}"
-            )
-        try:
-            if typ == "input":
-                realtime_data = await self.async_read_input_registers(
-                    unit=self._modbus_addr,
-                    address=block.start,
-                    count=block.end - block.start,
+        async with manage_connection(self):
+            if self.cyclecount < 5:
+                _LOGGER.debug(
+                    f"{self.name} modbus {typ} block start: 0x{block.start:x} end: 0x{block.end:x}  len: {block.end - block.start} \nregs: {block.regs}"
                 )
-            else:
-                realtime_data = await self.async_read_holding_registers(
-                    unit=self._modbus_addr,
-                    address=block.start,
-                    count=block.end - block.start,
-                )
-        except Exception as ex:
-            errmsg = f"exception {str(ex)} "
-        else:
-            if realtime_data.isError():
-                errmsg = f"read_error "
-        if errmsg == None:
-            decoder = BinaryPayloadDecoder.fromRegisters(
-                realtime_data.registers,
-                self.plugin.order16,
-                wordorder=self.plugin.order32,
-            )
-            # decoder = self._client.convert_from_registers(
-            #    registers=realtime_data.registers,
-            #    data_type=client.DATATYPE.INT16,
-            #    word_order=self.plugin.order32
-            # )
-            prevreg = block.start
-            for reg in block.regs:
-                if (reg - prevreg) > 0:
-                    decoder.skip_bytes((reg - prevreg) * 2)
-                    if self.cyclecount < 5:
-                        _LOGGER.debug(f"skipping bytes {(reg-prevreg) * 2}")
-                descr = block.descriptions[reg]
-                if type(descr) is dict:  #  set of byte values
-                    val = decoder.decode_16bit_uint()
-                    for k in descr:
-                        self.treat_address(data, decoder, descr[k], val)
-                    prevreg = reg + 1
-                else:  # single value
-                    self.treat_address(data, decoder, descr)
-                    if descr.unit in (
-                        REGISTER_S32,
-                        REGISTER_U32,
-                        REGISTER_ULSB16MSB16,
-                    ):
-                        prevreg = reg + 2
-                    elif descr.unit in (
-                        REGISTER_STR,
-                        REGISTER_WORDS,
-                    ):
-                        prevreg = reg + descr.wordcount
-                    else:
-                        prevreg = reg + 1
-            return True
-        else:  # block read failure
-            firstdescr = block.descriptions[block.start]  # check only first item in block
-            if firstdescr.ignore_readerror != False:  # ignore block read errors and return static data
-                for reg in block.regs:
-                    descr = block.descriptions[reg]
-                    if not (type(descr) is dict):
-                        if (descr.ignore_readerror != True) and (descr.ignore_readerror != False):
-                            data[descr.key] = descr.ignore_readerror  # return something static
-                return True
-            else:
-                if self.slowdown == 1:
-                    _LOGGER.info(
-                        f"{errmsg}: {self.name} cannot read {typ} registers at device {self._modbus_addr} position 0x{block.start:x}",
-                        exc_info=True,
+            try:
+                if typ == "input":
+                    realtime_data = await self.async_read_input_registers(
+                        unit=self._modbus_addr,
+                        address=block.start,
+                        count=block.end - block.start,
                     )
-                return False
+                else:
+                    realtime_data = await self.async_read_holding_registers(
+                        unit=self._modbus_addr,
+                        address=block.start,
+                        count=block.end - block.start,
+                    )
+            except Exception as ex:
+                errmsg = f"exception {str(ex)} "
+            else:
+                if realtime_data.isError():
+                    errmsg = f"read_error "
+            if errmsg == None:
+                decoder = BinaryPayloadDecoder.fromRegisters(
+                    realtime_data.registers,
+                    self.plugin.order16,
+                    wordorder=self.plugin.order32,
+                )
+                prevreg = block.start
+                for reg in block.regs:
+                    if (reg - prevreg) > 0:
+                        decoder.skip_bytes((reg - prevreg) * 2)
+                        if self.cyclecount < 5:
+                            _LOGGER.debug(f"skipping bytes {(reg-prevreg) * 2}")
+                    descr = block.descriptions[reg]
+                    if type(descr) is dict:  #  set of byte values
+                        val = decoder.decode_16bit_uint()
+                        for k in descr:
+                            self.treat_address(data, decoder, descr[k], val)
+                        prevreg = reg + 1
+                    else:  # single value
+                        self.treat_address(data, decoder, descr)
+                        if descr.unit in (
+                            REGISTER_S32,
+                            REGISTER_U32,
+                            REGISTER_ULSB16MSB16,
+                        ):
+                            prevreg = reg + 2
+                        elif descr.unit in (
+                            REGISTER_STR,
+                            REGISTER_WORDS,
+                        ):
+                            prevreg = reg + descr.wordcount
+                        else:
+                            prevreg = reg + 1
+                return True
+            else:  # block read failure
+                firstdescr = block.descriptions[block.start]  # check only first item in block
+                if firstdescr.ignore_readerror != False:  # ignore block read errors and return static data
+                    for reg in block.regs:
+                        descr = block.descriptions[reg]
+                        if not (type(descr) is dict):
+                            if (descr.ignore_readerror != True) and (descr.ignore_readerror != False):
+                                data[descr.key] = descr.ignore_readerror  # return something static
+                    return True
+                else:
+                    if self.slowdown == 1:
+                        _LOGGER.info(
+                            f"{errmsg}: {self.name} cannot read {typ} registers at device {self._modbus_addr} position 0x{block.start:x}",
+                            exc_info=True,
+                        )
+                    return False
 
     async def async_read_modbus_registers_all(self, group):
         if group.readPreparation is not None:

@@ -1,0 +1,83 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Indstillinger for forbindelse via modbus til inverter",
+        "data": {
+          "name": "Præfiks til navngivning af sensorerne på inverteren",
+          "read_modbus_addr": "Modbus-adressen på inverteren",
+          "interface": "Interface",
+          "read_eps": "Nødstrømsoption (EPS)",
+          "read_dcb": "Tørkontaktboks (SolaX Hybrid Gen4 & Gen5)",
+          "read_pm": "Paralleltilstand (Master-Slave)",
+          "plugin": "Invertertype",
+          "scan_interval": "Frekvens, i sekunder, for opdatering af data fra modbus-registre",
+          "time_out": "Modbus-timeout i sekunder"
+        }
+      },
+      "serial": {
+        "title": "Seriel Port Parametre",
+        "data": {
+          "read_serial_port": "Navn på den serielle port",
+          "baudrate": "Bitrate"
+        }
+      },
+      "tcp": {
+        "title": "TCP/IP Parametre",
+        "data": {
+          "host": "IP-adressen på modbus-enheden på inverteren",
+          "port": "TCP-port til forbindelse til inverteren"
+        }
+      }
+    },
+    "error": {
+      "already_configured": "Enheden er allerede konfigureret",
+      "name_already_used": "Dette navn er allerede brugt eller ugyldigt",
+      "invalid_host": "Ugyldig IP-adresse"
+    },
+    "abort": {
+      "already_configured": "Enheden er allerede konfigureret"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Indstillinger for forbindelse via modbus til inverter",
+        "data": {
+          "name": "Præfiks til navngivning af sensorerne på inverteren",
+          "read_modbus_addr": "Modbus-adressen på inverteren",
+          "interface": "Interface",
+          "read_eps": "Nødstrømsoption (EPS)",
+          "read_dcb": "Tørkontaktboks (SolaX Hybrid Gen4 & Gen5)",
+          "read_pm": "Paralleltilstand (Master-Slave)",
+          "plugin": "Invertertype",
+          "scan_interval": "Frekvens, i sekunder, for opdatering af data fra modbus-registre",
+          "time_out": "Modbus-timeout i sekunder"
+        }
+      },
+      "serial": {
+        "title": "Seriel Port Parametre",
+        "data": {
+          "read_serial_port": "Navn på den serielle port",
+          "baudrate": "Bitrate"
+        }
+      },
+      "tcp": {
+        "title": "TCP/IP Parametre",
+        "data": {
+          "host": "IP-adressen på modbus-enheden på inverteren",
+          "port": "TCP-port til forbindelse til inverteren",
+          "tcp_type": "Modbus TCP-variant"
+        }
+      }
+    },
+    "error": {
+      "already_configured": "Enheden er allerede konfigureret",
+      "name_already_used": "Dette navn er allerede brugt eller ugyldigt",
+      "invalid_host": "Ugyldig IP-adresse"
+    },
+    "abort": {
+      "already_configureret": "Enheden er allerede konfigureret"
+    }
+  }
+}
