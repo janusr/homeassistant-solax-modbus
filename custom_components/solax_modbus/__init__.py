@@ -527,11 +527,13 @@ class SolaXModbusHub:
         if not self._client.connected:
             _LOGGER.info("Inverter is not connected, trying to connect")
             return await self.async_connect()
-
         return self._client.connected
 
     async def async_connect(self):
         result = False
+        timeout = 3  # Set the timeout duration to 3 seconds
+        max_retries = 5  # Set the maximum number of retries
+        retry_delay = 2  # Set the delay between retries in seconds
 
         _LOGGER.debug(
             "Trying to connect to Inverter at %s:%s",
@@ -539,18 +541,61 @@ class SolaXModbusHub:
             self._client.comm_params.port,
         )
 
-        result = await self._client.connect()
-        if result:
-            _LOGGER.info(
-                "Inverter connected at %s:%s",
-                self._client.comm_params.host,
-                self._client.comm_params.port,
-            )
-        else:
+        for attempt in range(max_retries):
+            try:
+                result = await asyncio.wait_for(self._client.connect(), timeout)
+                if result:
+                    _LOGGER.info(
+                        "Inverter connected at %s:%s on attempt %d",
+                        self._client.comm_params.host,
+                        self._client.comm_params.port,
+                        attempt + 1,
+                    )
+                    break
+            except asyncio.TimeoutError:
+                _LOGGER.warning(
+                    "Connection attempt %d to Inverter at %s:%s timed out after %s seconds",
+                    attempt + 1,
+                    self._client.comm_params.host,
+                    self._client.comm_params.port,
+                    timeout,
+                )
+            except socket.error as e:
+                if e.errno == 111:
+                    _LOGGER.warning(
+                        "Connection attempt %d to Inverter at %s:%s failed with error: %s",
+                        attempt + 1,
+                        self._client.comm_params.host,
+                        self._client.comm_params.port,
+                        str(e),
+                    )
+                else:
+                    _LOGGER.error(
+                        "Error connecting to Inverter at %s:%s on attempt %d: %s",
+                        self._client.comm_params.host,
+                        self._client.comm_params.port,
+                        attempt + 1,
+                        str(e),
+                    )
+            except Exception as e:
+                _LOGGER.error(
+                    "Error connecting to Inverter at %s:%s on attempt %d: %s",
+                    self._client.comm_params.host,
+                    self._client.comm_params.port,
+                    attempt + 1,
+                    str(e),
+                )
+
+            if attempt < max_retries - 1:
+                _LOGGER.info("Retrying connection in %d seconds...", retry_delay)
+                await asyncio.sleep(retry_delay)
+
+        if not result:
             _LOGGER.warning(
-                "Unable to connect to Inverter at %s:%s",
+                "Unable to connect to Inverter at %s:%s after %d attempts",
                 self._client.comm_params.host,
                 self._client.comm_params.port,
+                max_retries,
             )
         return result
 
